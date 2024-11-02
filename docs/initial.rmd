@@ -1,0 +1,207 @@
+---
+title: "LDL and drug adjustment"
+author: Gibran Hemani
+date: "2023-03-24"
+categories: []
+---
+
+## Background
+
+-   People with high LDL cholesterol tend to take medication that lowers their observed LDL
+-   How does this affect genetic associations?
+
+Get a rough distribution of LDL cholesterol (e.g. like this)
+
+![](https://www.researchgate.net/publication/358644627/figure/fig3/AS:1124416071188480@1645093090168/Distribution-of-LDL-cholesterol-measurements-in-VRONI-Distribution-of-LDL-cholesterol.png)
+
+```{r}
+library(dplyr)
+hist(rnorm(10000, 85, sd=20), breaks=100)
+```
+
+Generate genetic effect for LDL cholesterol with effect `b_gy`
+
+```{r}
+n <- 100000
+g <- rnorm(n)
+mean_ldl <- 85
+sd_ldl <- 20
+b_gy <- 10
+y <- mean_ldl + g * b_gy + rnorm(n, sd=sqrt(sd_ldl^2 - b_gy^2))
+hist(y, breaks=100)
+```
+
+People with high LDL cholesterol more likely to take medication - make an adjusted LDL cholesterol measure which has a reduced value amongst people taking medications
+
+```{r}
+n <- 100000
+g <- rnorm(n)
+mean_ldl <- 130
+sd_ldl <- 20
+b_gy <- 1
+med_effect <- 0.8
+
+y <- mean_ldl + g * b_gy + rnorm(n, sd=sqrt(sd_ldl^2-b_gy^2))
+med <- rbinom(n, 1, plogis(scale(y)))
+y_obs <- y
+y_obs[as.logical(med)] <- y_obs[as.logical(med)] * med_effect
+
+rbind(
+  summary(lm(y ~ g))$coef[2,],
+  summary(lm(y_obs ~ g))$coef[2,]
+) %>% as_tibble() %>% mutate(measure=c("y", "y_obs"))
+```
+
+What happens if you put in an approximate adjustment of y_obs. e.g. the effect of the drug is relative (20% reduction), we could erroneously add an absolute value onto med users to try to adjust
+
+```{r}
+n <- 100000
+g <- rnorm(n)
+mean_ldl <- 130
+sd_ldl <- 20
+b_gy <- 1
+med_effect <- 0.8
+
+y <- mean_ldl + g * b_gy + rnorm(n, sd=sqrt(sd_ldl^2-b_gy^2))
+med <- rbinom(n, 1, plogis(scale(y)))
+y_obs <- y
+y_obs[as.logical(med)] <- y_obs[as.logical(med)] * med_effect
+
+y_adj_true <- y_obs
+y_adj_true[as.logical(med)] <- y_obs[as.logical(med)] / med_effect
+
+y_adj_approx <- y_obs
+y_adj_approx[as.logical(med)] <- y_obs[as.logical(med)] + 20
+
+rbind(
+  summary(lm(y ~ g))$coef[2,],
+  summary(lm(y_obs ~ g))$coef[2,],
+  summary(lm(y_adj_true ~ g))$coef[2,],
+  summary(lm(y_adj_approx ~ g))$coef[2,]
+) %>% as_tibble() %>% mutate(measure=c("y", "y_obs", "y_adj_true", "y_adj_approx"))
+```
+
+Does collider bias have an impact? Statins are administered due to having a cardio event or being high risk e.g. due to family history. So there could be other non-LDL genetic factors that influence medication usage, and selecting or adjusting for medication usage could induce a collider that associates non-LDL genotypes with the adjusted LDL phenotype. e.g. simulate a large non-LDL factor that influences medication for illustration
+
+```{r}
+n <- 1000000
+g <- rnorm(n)
+g_other <- rnorm(n)
+mean_ldl <- 130
+sd_ldl <- 20
+b_gy <- 1
+b_omed <- 1
+med_effect <- 0.8
+
+y <- mean_ldl + g * b_gy + rnorm(n, sd=sqrt(sd_ldl^2-b_gy^2))
+med <- rbinom(n, 1, plogis(scale(y) + g_other * b_omed))
+y_obs <- y
+y_obs[as.logical(med)] <- y_obs[as.logical(med)] * med_effect
+
+y_adj_true <- y_obs
+y_adj_true[as.logical(med)] <- y_obs[as.logical(med)] / med_effect
+
+y_adj_approx <- y_obs
+y_adj_approx[as.logical(med)] <- y_obs[as.logical(med)] + 20
+```
+
+Result for LDL genotype
+
+```{r}
+rbind(
+  summary(lm(y ~ g))$coef[2,],
+  summary(lm(y_obs ~ g))$coef[2,],
+  summary(lm(y_adj_true ~ g))$coef[2,],
+  summary(lm(y_adj_approx ~ g))$coef[2,]
+) %>% as_tibble() %>% mutate(measure=c("y", "y_obs", "y_adj_true", "y_adj_approx"))
+```
+
+Result for non-LDL genotype
+
+```{r}
+rbind(
+  summary(lm(y ~ g_other))$coef[2,],
+  summary(lm(y_obs ~ g_other))$coef[2,],
+  summary(lm(y_adj_true ~ g_other))$coef[2,],
+  summary(lm(y_adj_approx ~ g_other))$coef[2,]
+) %>% as_tibble() %>% mutate(measure=c("y", "y_obs", "y_adj_true", "y_adj_approx"))
+```
+
+
+### Summary
+
+-   A relative reduction in observed LDL measures due to medication will lead to attenuated genetic effect estimates
+-   Adjustment to correct LDL values amongst medication users potentially resolves the issue
+-   Even an inaccurate adjustment can improve the estimate
+-   Collider bias induces a negative association between unadjusted LDL and non-LDL genetic factors, but not a great deal of issue at the LDL locus
+-   Perfect adjustment of medication would resolve this problem
+-   Imperfect adjustment partially avoids the issue but some bias remains at the non-LDL genetic factor
+
+
+```{r}
+sim <- function(n, mean_ldl=130, sd_ldl=20, b_gy=1, b_omed=1, med_effect=0.8, abs_adjustment = 20, rel_adjustment = 0.8, sim=1) {
+
+    args <- c(as.list(environment())) %>% as_tibble()
+    g <- rnorm(n)
+    g_other <- rnorm(n)
+
+    y <- mean_ldl + g * b_gy + rnorm(n, sd=sqrt(sd_ldl^2-b_gy^2))
+    med <- rbinom(n, 1, plogis(scale(y) + g_other * b_omed))
+    y_obs <- y
+    y_obs[as.logical(med)] <- y_obs[as.logical(med)] * med_effect
+
+    y_adj_true <- y_obs
+    y_adj_true[as.logical(med)] <- y_obs[as.logical(med)] / med_effect
+
+    y_adj_abs <- y_obs
+    y_adj_abs[as.logical(med)] <- y_obs[as.logical(med)] + abs_adjustment
+
+    y_adj_rel <- y_obs
+    y_adj_rel[as.logical(med)] <- y_obs[as.logical(med)] / rel_adjustment
+
+
+    o <- bind_rows(
+        bind_rows(
+            summary(lm(y ~ g))$coef[2,],
+            summary(lm(y_obs ~ g))$coef[2,],
+            summary(lm(y_adj_abs ~ g))$coef[2,],
+            summary(lm(y_adj_rel ~ g))$coef[2,],
+        ) %>% as_tibble() %>% mutate(measure=c("y", "y_obs", "y_adj_abs", "y_adj_rel"), g="ldl"),
+
+        bind_rows(
+            summary(lm(y ~ g_other))$coef[2,],
+            summary(lm(y_obs ~ g_other))$coef[2,],
+            summary(lm(y_adj_abs ~ g_other))$coef[2,],
+            summary(lm(y_adj_rel ~ g_other))$coef[2,],
+        ) %>% as_tibble() %>% mutate(measure=c("y", "y_obs", "y_adj_abs", "y_adj_rel"), g="other")
+    )
+    names(o)[1:4] <- c("beta", "se", "tval", "pval")
+    o <- bind_cols(o, args)
+    return(o)
+}
+
+sim(100000)
+```
+
+
+```{r}
+params <- expand.grid(
+    n = 100000,
+    abs_adjustment = seq(0, 50, by=10),
+    rel_adjustment = seq(0.5, 1.2, by=0.1),
+    sim=1:20
+)
+dim(params)
+```
+
+```{r}
+res <- purrr::pmap(params, sim, .progress=TRUE) %>% bind_rows()
+```
+
+
+
+---
+
+```{r}
+sessionInfo()
+```
