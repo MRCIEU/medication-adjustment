@@ -125,3 +125,15 @@ labs(x="MSE adjusted", y="MSE unadjusted", colour="Correct model") +
 xlim(0,0.25) + ylim(0, 0.25)
 ggsave(here("images/adjustment_detection_mse.pdf"))
 
+group_by(res, sim) %>%
+arrange(desc(r2)) %>%
+slice_head(n=1) %>%
+ungroup() %>% 
+mutate(bhat=(1-bhat)^2, b_cov=(1-b_cov)^2) %>%
+ggplot(aes(x=bhat, y=b_cov)) +
+geom_point(aes(colour=method=="relative")) +
+geom_abline() +
+labs(x="MSE adjusted", y="MSE medication covariate", colour="Correct model") +
+xlim(0,0.15) + ylim(0, 0.15)
+ggsave(here("images/adjustment_detection_covs_mse.pdf"))
+
