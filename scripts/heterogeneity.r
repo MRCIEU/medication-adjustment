@@ -16,7 +16,7 @@ library(here)
 #' @param sim
 #' 
 #' @return table of results for estimates on ldl genotype and other genotype under different models
-sim <- function(n, mean_ldl=130, sd_ldl=20, b_gy=1, b_omed=1, med_effect=0.8, abs_adjustment = 20, rel_adjustment = 0.8, sim=1) {
+sim <- function(n, mean_ldl=130, sd_ldl=20, b_gy=1, b_omed=1, med_effect=0.8, abs_adjustment = 20, rel_adjustment = 0.8, het_sd = 0, sim=1) {
 
     args <- c(as.list(environment())) %>% as_tibble()
     g <- rnorm(n)
@@ -24,11 +24,11 @@ sim <- function(n, mean_ldl=130, sd_ldl=20, b_gy=1, b_omed=1, med_effect=0.8, ab
 
     y <- mean_ldl + g * b_gy + rnorm(n, sd=sqrt(sd_ldl^2-b_gy^2))
     med <- rbinom(n, 1, plogis(scale(y) + g_other * b_omed))
-    y_obs <- y
-    y_obs[as.logical(med)] <- y_obs[as.logical(med)] * med_effect
 
-    y_adj_true <- y_obs
-    y_adj_true[as.logical(med)] <- y_obs[as.logical(med)] / med_effect
+    medeff <- rnorm(n, med_effect, het_sd)
+
+    y_obs <- y
+    y_obs[as.logical(med)] <- y_obs[as.logical(med)] * medeff[as.logical(med)]
 
     y_adj_abs <- y_obs
     y_adj_abs[as.logical(med)] <- y_obs[as.logical(med)] + abs_adjustment
@@ -57,15 +57,16 @@ sim <- function(n, mean_ldl=130, sd_ldl=20, b_gy=1, b_omed=1, med_effect=0.8, ab
     return(o)
 }
 
-# Example simulation
-sim(100000)
+sim(100000, het_sd=0.2)
+
+
 
 # Setup parameters
 params <- expand.grid(
     n = 100000,
-    abs_adjustment = seq(0, 50, by=10),
-    rel_adjustment = seq(0.5, 1.2, by=0.1),
-    sim=1:20
+    rel_adjustment = seq(0.7, 1, by=0.1),
+    het_sd = c(0, 0.1, 0.2),
+    sim=1:100
 )
 dim(params)
 
@@ -73,32 +74,20 @@ dim(params)
 res <- purrr::pmap(params, sim, .progress=TRUE) %>% bind_rows()
 
 
-saveRDS(res, file=here("results/adjustment_mismatch.rds"))
+saveRDS(res, file=here("results/heterogeneity.rds"))
 
+###
 
-# Plot
-
-res <- readRDS(here("results/adjustment_mismatch.rds"))
+res <- readRDS(here("results/heterogeneity.rds"))
 res <- res %>% mutate(
     measure = case_when(measure == "y" ~ "True Y", measure == "y_obs" ~ "Observed Y", measure == "y_adj_abs" ~ "Absolute adjustment", measure == "y_adj_rel" ~ "Relative adjustment"),
     g = case_when(g == "ldl" ~ "G->Y", g == "other" ~ "G->Medication")
 )
 
 
-ggplot(res %>% filter(measure != "Relative adjustment"), aes(x=abs_adjustment, y=beta)) +
-geom_point(aes(colour=measure)) +
-facet_grid(g ~ ., scale="free_y") +
-scale_colour_brewer(type="qual") +
-geom_smooth(aes(colour=measure)) +
-labs(y="Genetic effect estimate", x="Absolute adjustment to Y", colour="")
-ggsave(here("images/absolute_adjustment.pdf"))
-
-ggplot(res %>% filter(measure != "Absolute adjustment"), aes(x=rel_adjustment, y=beta)) +
-geom_point(aes(colour=measure)) +
-facet_grid(g ~ ., scale="free_y") +
-scale_colour_brewer(type="qual") +
-geom_smooth(aes(colour=measure)) +
-labs(y="Genetic effect estimate", x="Relative adjustment to Y", colour="")
-ggsave(here("images/relative_adjustment.pdf"))
-
+ggplot(res %>% filter(measure != "Absolute adjustment"), aes(x=as.factor(rel_adjustment), y=beta)) +
+geom_boxplot(aes(colour=as.factor(het_sd))) +
+facet_grid(g ~ measure, scale="free_y") +
+labs(y="Genetic effect estimate", x="Relative adjustment to Y", colour="Heterogeneity\nof medication\neffect")
+ggsave(here("images/heterogeneity.pdf"))
 
